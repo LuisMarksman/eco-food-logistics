@@ -71,7 +71,7 @@ test('parseSheetRows maps live MQ sensor CSV headers with a default device ID', 
     assert.equal(rows[0].deviceId, 'eco-device-001');
     assert.equal(rows[0].temperatureC, 30.7);
     assert.equal(rows[0].humidityPct, 85.5);
-    assert.equal(rows[0].gasLevel, 638);
+    assert.equal(rows[0].gasLevel, 0);
     assert.equal(rows[0].mq2, 0);
     assert.equal(rows[0].mq3, 638);
     assert.equal(rows[0].mq135, 0);
@@ -93,6 +93,21 @@ test('parseSheetRows accepts the misspelled teperature header from device sheets
     assert.equal(rows[0].temperatureC, 29.4);
     assert.equal(rows[0].humidityPct, 71);
     assert.equal(rows[0].gasLevel, 56);
+});
+
+test('parseSheetRows falls back to mq3 when mq135 is missing in live sheet data', () => {
+    const rows = parseSheetRows(parseCsv([
+        'time,mq2,mq3,temperature,humidity',
+        '5/1/2026 23:07:06,12,34,29.4,71'
+    ].join('\n')), {
+        spreadsheetId: 'sheet-1',
+        range: 'gid:0',
+        hasHeader: true,
+        defaultDeviceId: 'eco-device-001'
+    });
+
+    assert.equal(rows[0].gasLevel, 34);
+    assert.equal(rows[0].mq3, 34);
 });
 
 test('importSheetTelemetryValues imports new rows and skips duplicates idempotently', async () => {

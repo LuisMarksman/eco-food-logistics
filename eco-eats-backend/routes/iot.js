@@ -48,6 +48,8 @@ function categoryFromPrediction(prediction) {
 
 function readingPayload(row) {
     return {
+        deviceId: row.deviceId || '',
+        foodItemId: row.foodItemId || '',
         temperatureC: row.temperatureC,
         humidityPct: row.humidityPct,
         gasLevel: row.gasLevel,
@@ -62,16 +64,15 @@ function readingPayload(row) {
 function statusFromFreshness(freshness, prediction) {
     const predictedState = prediction?.state || '';
     const isEmpty = predictedState === 'empty' || prediction?.label?.includes('empty');
-    const isRotten = ['rotten', 'unsafe'].includes(predictedState) || freshness.state === 'unsafe';
     const isFresh = ['fresh', 'good', 'excellent'].includes(predictedState)
-        || (!isEmpty && !isRotten && ['excellent', 'good'].includes(freshness.state));
-    const stillEdible = !isEmpty && !isRotten && freshness.state !== 'unsafe';
+        || (!isEmpty && ['excellent', 'good'].includes(freshness.state));
+    const stillEdible = !isEmpty && freshness.state !== 'unsafe';
 
     return {
         emptyBox: isEmpty,
         freshFood: isFresh,
         stillEdible,
-        rotten: isRotten
+        rotten: freshness.state === 'unsafe'
     };
 }
 
@@ -79,11 +80,11 @@ function displayFreshnessForFlags(freshness, flags) {
     if (flags.emptyBox) {
         return {
             ...freshness,
-            score: null,
-            state: 'unknown',
+            score: freshness.score,
+            state: freshness.state,
             effectiveExpiryDate: null,
             remainingShelfLifeMinutes: null,
-            recommendation: 'Container matches the empty baseline. Add food before routing.'
+            recommendation: freshness.recommendation || 'Container matches the open-container baseline. Sensor condition is stable, but add food before routing.'
         };
     }
 
@@ -115,14 +116,32 @@ function hasLiveSensorValues(row = {}) {
         && (row.mq2 !== null || row.mq3 !== null || row.mq135 !== null || row.gasLevel !== null);
 }
 
+function buildDisplayFreshness(payload = {}, options = {}) {
+    const freshness = buildFreshnessSnapshot(payload, options);
+    const prediction = options.prediction || classifyReading(payload) || freshness.model?.calibratedPrediction || null;
+    const flags = statusFromFreshness(freshness, prediction);
+    const displayFreshness = displayFreshnessForFlags(freshness, flags);
+
+    return {
+        freshness,
+        prediction,
+        flags,
+        displayFreshness
+    };
+}
+
 router.post('/freshness-preview', (req, res) => {
-    const freshness = buildFreshnessSnapshot(req.body, {
+    const { displayFreshness, prediction, flags } = buildDisplayFreshness(req.body, {
         expiryDate: req.body.expiryDate,
         category: req.body.category,
         now: req.body.now ? new Date(req.body.now) : new Date()
     });
 
-    return res.status(200).json(freshness);
+    return res.status(200).json({
+        ...displayFreshness,
+        prediction,
+        flags
+    });
 });
 
 router.get('/live-status', async (req, res) => {
@@ -143,20 +162,19 @@ router.get('/live-status', async (req, res) => {
         }
 
         const payload = readingPayload(latest);
-        const prediction = classifyReading(payload);
-        const freshness = buildFreshnessSnapshot(payload, {
-            category: req.query.category || categoryFromPrediction(prediction),
+        const rawPrediction = classifyReading(payload);
+        const { prediction, flags, displayFreshness } = buildDisplayFreshness(payload, {
+            category: req.query.category || categoryFromPrediction(rawPrediction),
+            prediction: rawPrediction,
             now: new Date()
         });
-        const flags = statusFromFreshness(freshness, prediction || freshness.model?.calibratedPrediction);
-        const displayFreshness = displayFreshnessForFlags(freshness, flags);
 
         return res.status(200).json({
             observedAt: latest.observedAt,
             rowNumber: latest.rowNumber,
             reading: payload,
             freshness: displayFreshness,
-            prediction: prediction || freshness.model?.calibratedPrediction || null,
+            prediction: prediction || displayFreshness.model?.calibratedPrediction || null,
             flags,
             hoursUntilRotten: flags.emptyBox || flags.rotten || displayFreshness.remainingShelfLifeMinutes === null
                 ? null

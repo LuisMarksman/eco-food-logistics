@@ -14,6 +14,7 @@ import {
   freshnessLabel,
   routeRiskClass
 } from '../utils/foodDisplay';
+import { calculateLiveFreshness } from '../utils/liveFreshness';
 
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
@@ -41,6 +42,8 @@ const initialSensor = {
   foodItemId: '',
   deviceId: 'eco-device-001'
 };
+
+const LIVE_SHEET_REFRESH_MS = 5000;
 
 const presets = [
   {
@@ -351,6 +354,7 @@ const FreshnessLab = () => {
   const [matches, setMatches] = useState([]);
   const [matchStatus, setMatchStatus] = useState('');
   const [loadingRecords, setLoadingRecords] = useState(true);
+  const [loadingLiveSheet, setLoadingLiveSheet] = useState(false);
   const [syncToken, setSyncToken] = useState(() => localStorage.getItem('sheetsSyncToken') || '');
   const [syncStatus, setSyncStatus] = useState(null);
   const [syncMessage, setSyncMessage] = useState('Enter the backend sync token to check Google Sheets.');
@@ -382,6 +386,51 @@ const FreshnessLab = () => {
   const updateCenter = (field, value) => {
     setCenterData((current) => ({ ...current, [field]: value }));
   };
+
+  const applyLiveSheetStatus = useCallback((status) => {
+    const reading = status?.reading || {};
+    const liveFood = status?.reading?.foodItemId
+      ? foods.find((item) => item._id === status.reading.foodItemId)
+      : foods.find((item) => item.deviceId && item.deviceId === status.reading?.deviceId);
+    const nextCategory = liveFood?.category || sensor.category;
+    const nextExpiryDate = liveFood?.expiryDate
+      ? new Date(new Date(liveFood.expiryDate).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+      : sensor.expiryDate;
+
+    setSensor((current) => ({
+      ...current,
+      foodItemId: liveFood?._id || current.foodItemId,
+      deviceId: reading.deviceId || current.deviceId,
+      category: nextCategory,
+      expiryDate: nextExpiryDate,
+      temperatureC: reading.temperatureC ?? current.temperatureC,
+      humidityPct: reading.humidityPct ?? current.humidityPct,
+      gasLevel: reading.gasLevel ?? current.gasLevel
+    }));
+
+    const observedAtText = status?.observedAt ? formatDateTime(status.observedAt) : 'the latest sheet reading';
+    setPreviewStatus(`Hardware simulator synced from Google Sheet at ${observedAtText}.`);
+  }, [foods, sensor.category, sensor.expiryDate]);
+
+  const loadLiveSheetStatus = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoadingLiveSheet(true);
+    }
+
+    try {
+      const res = await api.get('/iot/live-status');
+      applyLiveSheetStatus(res.data);
+    } catch (err) {
+      console.error('Live sheet status failed:', err);
+      if (!silent) {
+        setPreviewStatus(err.response?.data?.message || 'Could not read the live Google Sheet.');
+      }
+    } finally {
+      if (!silent) {
+        setLoadingLiveSheet(false);
+      }
+    }
+  }, [applyLiveSheetStatus]);
 
   const applyPreset = (preset) => {
     setSensor((current) => ({
@@ -509,43 +558,49 @@ const FreshnessLab = () => {
   }, [loadDispatchQueue, loadRecords]);
 
   useEffect(() => {
+    loadLiveSheetStatus();
+
+    const refreshTimer = window.setInterval(() => {
+      loadLiveSheetStatus({ silent: true });
+    }, LIVE_SHEET_REFRESH_MS);
+
+    return () => window.clearInterval(refreshTimer);
+  }, [loadLiveSheetStatus]);
+
+  useEffect(() => {
     if (!selectedFood) return;
 
-    const liveFreshness = selectedFood.freshness || {};
-    const liveGasLevel = liveFreshness.gasIndex ?? liveFreshness.gasLevel;
+    const latestSensorReading = Array.isArray(selectedFood.sensorReadings) && selectedFood.sensorReadings.length
+      ? selectedFood.sensorReadings[selectedFood.sensorReadings.length - 1]
+      : null;
 
     setSensor((current) => ({
       ...current,
       deviceId: selectedFood.deviceId || current.deviceId,
       category: selectedFood.category || current.category,
-      temperatureC: liveFreshness.temperatureC ?? current.temperatureC,
-      humidityPct: liveFreshness.humidityPct ?? current.humidityPct,
-      gasLevel: liveGasLevel ?? current.gasLevel,
+      temperatureC: latestSensorReading?.temperatureC ?? current.temperatureC,
+      humidityPct: latestSensorReading?.humidityPct ?? current.humidityPct,
+      gasLevel: latestSensorReading?.gasIndex ?? latestSensorReading?.gasLevel ?? current.gasLevel,
       expiryDate: selectedFood.expiryDate
         ? new Date(new Date(selectedFood.expiryDate).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)
         : current.expiryDate
     }));
-    if (selectedFood.freshness?.state) {
-      setFreshness(selectedFood.freshness);
-    }
   }, [selectedFood]);
 
   const { category, expiryDate, temperatureC, humidityPct, gasLevel } = sensor;
 
   useEffect(() => {
-    const previewPayload = { category, expiryDate, temperatureC, humidityPct, gasLevel };
-    const previewFreshness = async () => {
-      try {
-        const res = await api.post('/iot/freshness-preview', previewPayload);
-        setFreshness(res.data);
-        setPreviewStatus('Live preview updated.');
-      } catch (err) {
-        console.error('Freshness preview failed:', err);
-        setPreviewStatus('Could not preview freshness. Check that the backend is running.');
-      }
-    };
+    const timer = window.setTimeout(() => {
+      setFreshness(calculateLiveFreshness({
+        category,
+        expiryDate,
+        temperatureC,
+        humidityPct,
+        gasLevel
+      }));
+      setPreviewStatus('Live score calculated locally from the current inputs.');
+    }, 60);
 
-    const timer = window.setTimeout(previewFreshness, 180);
     return () => window.clearTimeout(timer);
   }, [category, expiryDate, temperatureC, humidityPct, gasLevel]);
 
@@ -562,7 +617,6 @@ const FreshnessLab = () => {
         ...sensor,
         readingAt: new Date().toISOString()
       });
-      setFreshness(res.data.freshness);
       setTelemetryStatus(`Telemetry attached to ${selectedFood?.title || res.data.foodItemId}.`);
     } catch (err) {
       console.error('Telemetry failed:', err);
@@ -642,11 +696,16 @@ const FreshnessLab = () => {
               <p className="eyebrow">Sensor input</p>
               <h2>Hardware simulator</h2>
             </div>
-            {freshness && (
-              <span className={`status-pill ${freshnessClass(freshness.state)}`}>
-                {freshnessLabel(freshness.state)}
-              </span>
-            )}
+            <div className="lab-status-stack">
+              <button className="btn-secondary" type="button" onClick={() => loadLiveSheetStatus()} disabled={loadingLiveSheet}>
+                {loadingLiveSheet ? 'Syncing...' : 'Sync sheet now'}
+              </button>
+              {freshness && (
+                <span className={`status-pill ${freshnessClass(freshness.state)}`}>
+                  {freshnessLabel(freshness.state)}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="preset-grid">

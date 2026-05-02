@@ -46,13 +46,14 @@ function gasLevelFromHeaderRow(row, headerMap) {
     const direct = findHeaderValue(row, headerMap, ['gasLevel', 'gas', 'gasIndex']);
     if (direct !== undefined && direct !== '') return toNumber(direct);
 
-    const mqValues = Array.from(headerMap.entries())
-        .filter(([name]) => /^mq\d+$/.test(name))
-        .map(([, index]) => toNumber(row[index]))
-        .filter((value) => value !== null);
+    const mq135 = toNumber(findHeaderValue(row, headerMap, ['mq135']));
+    if (mq135 !== null) return mq135;
 
-    if (mqValues.length === 0) return null;
-    return Math.max(...mqValues);
+    const mq3 = toNumber(findHeaderValue(row, headerMap, ['mq3']));
+    if (mq3 !== null) return mq3;
+
+    const mq2 = toNumber(findHeaderValue(row, headerMap, ['mq2']));
+    return mq2;
 }
 
 function mqReadingsFromHeaderRow(row, headerMap) {

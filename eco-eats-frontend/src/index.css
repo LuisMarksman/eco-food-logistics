@@ -1154,11 +1154,17 @@ textarea {
 }
 
 .route-discovery-layout {
-  grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1.25fr) minmax(280px, 340px);
+  grid-template-areas: "panel map list";
+  align-items: start;
 }
 
 .route-discovery-panel {
+  grid-area: panel;
+  min-width: 0;
   align-self: start;
+  position: static;
+  top: auto;
 }
 
 .route-discovery-actions {
@@ -1168,6 +1174,8 @@ textarea {
 }
 
 .route-pickup-map-shell {
+  grid-area: map;
+  min-width: 0;
   position: relative;
 }
 
@@ -1205,27 +1213,32 @@ textarea {
 }
 
 .route-food-list-card {
-  grid-column: 1 / -1;
+  grid-area: list;
   display: grid;
+  align-content: start;
   gap: 16px;
   padding: 18px;
+  min-width: 0;
+  max-height: 620px;
+  overflow: auto;
 }
 
 .route-food-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
 .route-food-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   padding: 12px;
   border: 1px solid #e5eee8;
   border-radius: 6px;
   background: #fbfcfb;
   cursor: pointer;
+  min-width: 0;
 }
 
 .route-food-card:hover,
@@ -1238,6 +1251,7 @@ textarea {
 .route-food-card h3,
 .route-food-card p {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .route-food-card p {
@@ -1247,8 +1261,11 @@ textarea {
 
 .route-food-meta {
   display: grid;
-  justify-items: end;
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  justify-content: start;
+  justify-items: start;
+  gap: 8px 10px;
+  min-width: 0;
   color: var(--ops-muted);
   font-weight: 800;
 }
@@ -1573,6 +1590,15 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.lab-form-grid > * {
+  min-width: 0;
+}
+
+.lab-form-grid input,
+.lab-form-grid select {
+  min-width: 0;
 }
 
 .lab-results-column {
@@ -2013,6 +2039,11 @@ textarea {
   .dashboard-rail {
     border-right: none;
     border-bottom: 1px solid var(--ops-border);
+  }
+
+  .route-food-list-card {
+    max-height: none;
+    overflow: visible;
   }
 }
 

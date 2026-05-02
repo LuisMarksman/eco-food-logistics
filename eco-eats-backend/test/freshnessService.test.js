@@ -76,6 +76,39 @@ test('buildFreshnessSnapshot uses MQ readings to estimate spoilage hours', () =>
     assert.ok(snapshot.effectiveExpiryDate > now);
 });
 
+test('buildFreshnessSnapshot treats an empty-container calibration match as unknown instead of unsafe', () => {
+    const now = new Date('2026-05-02T02:30:00.000Z');
+    const snapshot = buildFreshnessSnapshot({
+        mq2: 0,
+        mq3: 524,
+        mq135: 16,
+        temperatureC: 35.8,
+        humidityPct: 63.7,
+        readingAt: now
+    }, { now, category: 'packaged' });
+
+    assert.equal(snapshot.state, 'unknown');
+    assert.equal(snapshot.score, null);
+    assert.equal(snapshot.remainingShelfLifeMinutes, null);
+    assert.match(snapshot.recommendation, /empty baseline/i);
+});
+
+test('buildFreshnessSnapshot uses the fresh chips calibration to avoid unsafe live scoring', () => {
+    const now = new Date('2026-05-02T02:30:00.000Z');
+    const snapshot = buildFreshnessSnapshot({
+        mq2: 0,
+        mq3: 674,
+        mq135: 40,
+        temperatureC: 34.4,
+        humidityPct: 62.6,
+        readingAt: now
+    }, { now, category: 'packaged' });
+
+    assert.notEqual(snapshot.state, 'unsafe');
+    assert.ok(snapshot.score >= 55);
+    assert.match(snapshot.signals[0], /fresh_opened_chips/i);
+});
+
 test('q10Rate increases spoilage pressure as temperature rises', () => {
     assert.equal(q10Rate(4, { idealTempC: 4, q10: 2 }), 1);
     assert.equal(q10Rate(14, { idealTempC: 4, q10: 2 }), 2);

@@ -109,6 +109,14 @@ function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 
+function normalizedScore(weightedStress) {
+    const stressRatio = clamp(weightedStress / 100, 0, 1);
+
+    // Keep the top end more usable for baseline and moderate conditions while
+    // still dropping steeply once the combined stress gets genuinely severe.
+    return Math.round(clamp((1 - Math.pow(stressRatio, 1.35)) * 100, 0, 100));
+}
+
 function hasSensorValues(reading = {}) {
     return ['temperatureC', 'humidityPct', 'gasLevel', 'temperature', 'teperature', 'humidity', 'gas', 'mq2', 'mq3', 'mq135']
         .some((field) => reading[field] !== undefined && reading[field] !== null && reading[field] !== '');
@@ -205,14 +213,14 @@ function mqSpoilageStress(reading = {}) {
 function humidityStress(humidityPct, profile) {
     if (humidityPct === null) return 0;
     if (humidityPct >= profile.humidityMin && humidityPct <= profile.humidityMax) {
-        return Math.abs(humidityPct - profile.idealHumidityPct) * 0.08;
+        return Math.abs(humidityPct - profile.idealHumidityPct) * 0.03;
     }
 
     if (humidityPct < profile.humidityMin) {
-        return clamp((profile.humidityMin - humidityPct) * 0.45, 4, 18);
+        return clamp((profile.humidityMin - humidityPct) * 0.18, 1, 8);
     }
 
-    return clamp((humidityPct - profile.humidityMax) * 0.5, 4, 22);
+    return clamp((humidityPct - profile.humidityMax) * 0.2, 1, 10);
 }
 
 function staleStress(observedAt, now) {
@@ -221,6 +229,30 @@ function staleStress(observedAt, now) {
     if (ageMinutes <= DEFAULT_SENSOR_STALE_MINUTES * 2) return 8;
     if (ageMinutes <= DEFAULT_SENSOR_STALE_MINUTES * 4) return 16;
     return 26;
+}
+
+function weightedStressScore({
+    thermalPenalty,
+    combinedGasPenalty,
+    humidityPenalty,
+    stalePenalty,
+    safetyCap
+}) {
+    if (safetyCap === 0) return 100;
+
+    const thermalComponent = clamp((thermalPenalty / 70) * 100, 0, 100);
+    const gasComponent = clamp((combinedGasPenalty / 90) * 100, 0, 100);
+    const humidityComponent = clamp((humidityPenalty / 12) * 100, 0, 100);
+    const staleComponent = clamp((stalePenalty / 26) * 100, 0, 100);
+
+    return Number(clamp(
+        (thermalComponent * 0.5)
+        + (gasComponent * 0.3)
+        + (humidityComponent * 0.06)
+        + (staleComponent * 0.14),
+        0,
+        100
+    ).toFixed(1));
 }
 
 function safetyCapMinutes(temperatureC, gasIndex, profile) {
@@ -329,14 +361,18 @@ function estimatedSpoilMinutes(score, model, profile) {
 function stateFromModel(score, model, reading, profile) {
     if (model.safetyCapMinutes === 0) return 'unsafe';
     if (reading.gasIndex !== null && reading.gasIndex >= profile.gasUnsafe) return 'unsafe';
-    if (score < 20 && model.temperatureBand === 'extreme') return 'unsafe';
-    if (score < 50 || model.temperatureBand === 'danger_zone' || (reading.gasIndex !== null && reading.gasIndex >= profile.gasCritical)) {
+    if (score < 18 && model.temperatureBand === 'extreme') return 'unsafe';
+    if (
+        score < 42
+        || (model.temperatureBand === 'danger_zone' && score < 62)
+        || (reading.gasIndex !== null && reading.gasIndex >= profile.gasCritical)
+    ) {
         return 'critical';
     }
-    if (score < 72 || model.qualityLossRate >= 1.8 || (reading.gasIndex !== null && reading.gasIndex >= profile.gasWatch)) {
+    if (score < 68 || model.qualityLossRate >= 2.3 || (reading.gasIndex !== null && reading.gasIndex >= profile.gasWatch)) {
         return 'watch';
     }
-    if (score < 88) return 'good';
+    if (score < 90) return 'good';
     return 'excellent';
 }
 
@@ -348,9 +384,40 @@ function recommendationFromState(state, model) {
     return 'Safe to route using normal allocation priority.';
 }
 
-function applyCalibratedPrediction(snapshot, prediction, normalized, now) {
-    if (!prediction || prediction.confidence < 0.58) return snapshot;
+function predictionGap(prediction = {}) {
+    const first = prediction.distances?.[0]?.distance;
+    const second = prediction.distances?.[1]?.distance;
 
+    if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+    return Number((second - first).toFixed(4));
+}
+
+function likelyCalibratedMatch(prediction, minimumConfidence = 0.5, minimumGap = 0.015, maximumDistance = 2.5) {
+    if (!prediction) return false;
+    if (!Number.isFinite(prediction.distance) || prediction.distance > maximumDistance) return false;
+    if ((prediction.confidence || 0) >= minimumConfidence) return true;
+
+    const gap = predictionGap(prediction);
+    return gap !== null && gap >= minimumGap;
+}
+
+function calibrationScoreFloor(prediction) {
+    if (!prediction) return null;
+
+    if (prediction.state === 'empty' || prediction.label?.includes('empty')) {
+        return prediction.confidence >= 0.65 ? 94 : 90;
+    }
+
+    if (['fresh', 'good', 'excellent'].includes(prediction.state)) {
+        if (prediction.confidence >= 0.7) return 90;
+        if (prediction.confidence >= 0.5) return 84;
+        return 78;
+    }
+
+    return null;
+}
+
+function applyCalibratedPrediction(snapshot, prediction, normalized, now) {
     const calibratedSignal = `Sensor signature is closest to ${prediction.label} (${Math.round(prediction.confidence * 100)}% confidence).`;
     const calibratedSnapshot = {
         ...snapshot,
@@ -369,51 +436,44 @@ function applyCalibratedPrediction(snapshot, prediction, normalized, now) {
         signals: [calibratedSignal, ...snapshot.signals]
     };
 
-    if (['rotten', 'unsafe'].includes(prediction.state) && prediction.confidence >= 0.68) {
-        const unsafe = prediction.confidence >= 0.78;
-        const effectiveExpiryDate = unsafe ? now : snapshot.effectiveExpiryDate;
+    if (!prediction) return snapshot;
 
+    if ((prediction.state === 'empty' || prediction.label.includes('empty')) && likelyCalibratedMatch(prediction, 0.2, 0.01, 2.5)) {
+        const scoreFloor = calibrationScoreFloor(prediction) ?? 90;
         return {
             ...calibratedSnapshot,
-            score: Math.min(snapshot.score ?? 100, unsafe ? 8 : 32),
-            state: unsafe ? 'unsafe' : 'critical',
-            effectiveExpiryDate,
-            remainingShelfLifeMinutes: unsafe ? 0 : Math.min(snapshot.remainingShelfLifeMinutes ?? 45, 45),
-            confidence: Math.max(snapshot.confidence, prediction.confidence),
-            recommendation: unsafe
-                ? 'Do not distribute. Sensor signature matches a rotten-food calibration sample.'
-                : 'Treat as high risk. Sensor signature is close to a rotten-food calibration sample.',
-            model: {
-                ...calibratedSnapshot.model,
-                estimatedSpoilMinutes: unsafe ? 0 : Math.min(calibratedSnapshot.model.estimatedSpoilMinutes ?? 45, 45)
-            }
-        };
-    }
-
-    if ((prediction.state === 'empty' || prediction.label.includes('empty')) && prediction.confidence >= 0.72) {
-        return {
-            ...calibratedSnapshot,
-            score: null,
-            state: 'unknown',
+            score: Math.max(snapshot.score ?? 0, scoreFloor),
+            state: 'good',
             effectiveExpiryDate: null,
             remainingShelfLifeMinutes: null,
-            confidence: prediction.confidence,
-            recommendation: 'Container matches the empty baseline. Add a food sample before routing.',
+            confidence: Math.max(snapshot.confidence, prediction.confidence),
+            recommendation: 'Container matches the open-container baseline. Ambient sensor condition looks stable; add food before routing.',
             signals: ['Container matches the empty baseline calibration.', ...snapshot.signals],
             temperatureC: normalized.temperatureC,
             humidityPct: normalized.humidityPct
         };
     }
 
-    if (['fresh', 'good', 'excellent'].includes(prediction.state) && prediction.confidence >= 0.72) {
+    if (['fresh', 'good', 'excellent'].includes(prediction.state) && likelyCalibratedMatch(prediction, 0.3, 0.015, 2.5)) {
+        const scoreFloor = calibrationScoreFloor(prediction) ?? 78;
+        const nextState = snapshot.state === 'unsafe'
+            ? 'watch'
+            : scoreFloor >= 88
+                ? 'excellent'
+                : 'good';
+
         return {
             ...calibratedSnapshot,
-            state: snapshot.state === 'unsafe' ? snapshot.state : (snapshot.score >= 72 ? 'good' : snapshot.state),
-            confidence: Math.max(snapshot.confidence, prediction.confidence)
+            score: Math.max(snapshot.score ?? 0, scoreFloor),
+            state: nextState,
+            confidence: Math.max(snapshot.confidence, prediction.confidence),
+            recommendation: nextState === 'excellent'
+                ? 'Sensor signature matches a stable fresh sample. Safe to route using normal allocation priority.'
+                : 'Sensor signature matches a fresh sample. Safe to route, but keep standard delivery discipline.'
         };
     }
 
-    return calibratedSnapshot;
+    return prediction.confidence >= 0.58 ? calibratedSnapshot : snapshot;
 }
 
 function buildFreshnessSnapshot(reading = {}, options = {}) {
@@ -467,8 +527,15 @@ function buildFreshnessSnapshot(reading = {}, options = {}) {
         : clamp((qualityLossRate - 1) * 18, 0, 45) + (band === 'danger_zone' ? 18 : band === 'extreme' ? 45 : 0);
     const safetyCap = safetyCapMinutes(normalized.temperatureC, normalized.gasIndex, profile);
     const combinedGasPenalty = Math.max(gasPenalty, mqPenalty);
-    const totalStress = clamp(thermalPenalty + combinedGasPenalty + humidityPenalty + stalePenalty, 0, 100);
-    const score = Math.round(clamp(100 - totalStress, 0, 100));
+    const rawTotalStress = Number(clamp(thermalPenalty + combinedGasPenalty + humidityPenalty + stalePenalty, 0, 100).toFixed(1));
+    const weightedStress = weightedStressScore({
+        thermalPenalty,
+        combinedGasPenalty,
+        humidityPenalty,
+        stalePenalty,
+        safetyCap
+    });
+    const score = normalizedScore(weightedStress);
     const model = {
         name: 'Q10 time-temperature + MQ gas spoilage estimate',
         categoryProfile: profile.label,
@@ -480,7 +547,9 @@ function buildFreshnessSnapshot(reading = {}, options = {}) {
         humidityStress: Number(humidityPenalty.toFixed(1)),
         thermalStress: Number(thermalPenalty.toFixed(1)),
         staleStress: Number(stalePenalty.toFixed(1)),
-        totalStress: Number(totalStress.toFixed(1))
+        rawTotalStress,
+        weightedStress,
+        totalStress: weightedStress
     };
     model.estimatedSpoilMinutes = estimatedSpoilMinutes(score, model, profile);
     const state = stateFromModel(score, model, normalized, profile);
@@ -522,6 +591,7 @@ function buildFreshnessSnapshot(reading = {}, options = {}) {
 module.exports = {
     CATEGORY_PROFILES,
     buildFreshnessSnapshot,
+    normalizedScore,
     normalizeGasIndex,
     normalizeSensorReading,
     q10Rate,
