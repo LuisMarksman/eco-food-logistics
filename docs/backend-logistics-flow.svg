@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Eco Eats Freshness-Aware Backend And Logistics Flow</title>
+  <desc id="desc">Flowchart showing donor supply intake, sensor telemetry, freshness scoring, demand center matching, route feasibility, claim locking, and delivery impact.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f6f8f4; }
+      .title { fill: #17231f; font: 800 42px Arial, sans-serif; }
+      .subtitle { fill: #65736d; font: 400 20px Arial, sans-serif; }
+      .lane-title { fill: #17231f; font: 800 18px Arial, sans-serif; text-transform: uppercase; }
+      .box-title { fill: #17231f; font: 800 20px Arial, sans-serif; }
+      .box-text { fill: #4d5d56; font: 400 15px Arial, sans-serif; }
+      .small { fill: #65736d; font: 700 13px Arial, sans-serif; }
+      .node { fill: #ffffff; stroke: #dce4dc; stroke-width: 2; rx: 12; }
+      .api { fill: #eef7f2; stroke: #177a62; }
+      .service { fill: #f6f1ff; stroke: #6f4bb3; }
+      .db { fill: #fff7e8; stroke: #b7791f; }
+      .risk { fill: #fff0ed; stroke: #b42318; }
+      .client { fill: #eef5fb; stroke: #245f93; }
+      .line { fill: none; stroke: #65736d; stroke-width: 3; }
+      .fresh-line { fill: none; stroke: #177a62; stroke-width: 4; }
+      .risk-line { fill: none; stroke: #b42318; stroke-width: 4; }
+      .caption { fill: #17231f; font: 800 16px Arial, sans-serif; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#65736d" />
+    </marker>
+    <marker id="greenArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#177a62" />
+    </marker>
+    <marker id="redArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#b42318" />
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1600" height="1120" />
+  <text x="80" y="80" class="title">Eco Eats Backend And Logistics Flow</text>
+  <text x="80" y="116" class="subtitle">Expiry-aware routing becomes freshness-aware routing when hardware telemetry updates the real delivery deadline.</text>
+
+  <rect x="60" y="155" width="1480" height="210" fill="#fbfcfb" stroke="#dce4dc" stroke-width="2" rx="18" />
+  <text x="90" y="190" class="lane-title">1. Supply Intake</text>
+
+  <rect x="95" y="220" width="230" height="100" class="node client" />
+  <text x="120" y="252" class="box-title">Donor App</text>
+  <text x="120" y="278" class="box-text">Adds surplus food</text>
+  <text x="120" y="300" class="small">title, quantity, expiry, pickup</text>
+
+  <rect x="400" y="220" width="260" height="100" class="node api" />
+  <text x="425" y="252" class="box-title">POST /api/food/add</text>
+  <text x="425" y="278" class="box-text">Validates donor role</text>
+  <text x="425" y="300" class="small">geocode + meal estimate</text>
+
+  <rect x="735" y="220" width="280" height="100" class="node service" />
+  <text x="760" y="252" class="box-title">Initial Freshness</text>
+  <text x="760" y="278" class="box-text">Optional sensor snapshot</text>
+  <text x="760" y="300" class="small">score + effective expiry</text>
+
+  <rect x="1090" y="220" width="300" height="100" class="node db" />
+  <text x="1115" y="252" class="box-title">Mongo FoodItem</text>
+  <text x="1115" y="278" class="box-text">Stores supply record</text>
+  <text x="1115" y="300" class="small">availability, route, freshness</text>
+
+  <path class="line" d="M325 270 H400" marker-end="url(#arrow)" />
+  <path class="line" d="M660 270 H735" marker-end="url(#arrow)" />
+  <path class="line" d="M1015 270 H1090" marker-end="url(#arrow)" />
+
+  <rect x="60" y="395" width="1480" height="250" fill="#fbfcfb" stroke="#dce4dc" stroke-width="2" rx="18" />
+  <text x="90" y="430" class="lane-title">2. Live Freshness Loop</text>
+
+  <rect x="95" y="465" width="250" height="110" class="node client" />
+  <text x="120" y="497" class="box-title">Hardware Device</text>
+  <text x="120" y="523" class="box-text">Temp + humidity + gas</text>
+  <text x="120" y="545" class="small">linked by deviceId or foodItemId</text>
+
+  <rect x="420" y="465" width="280" height="110" class="node api" />
+  <text x="445" y="497" class="box-title">POST /api/iot/telemetry</text>
+  <text x="445" y="523" class="box-text">Receives sensor reading</text>
+  <text x="445" y="545" class="small">optional x-device-token</text>
+
+  <rect x="775" y="465" width="300" height="110" class="node service" />
+  <text x="800" y="497" class="box-title">freshnessService</text>
+  <text x="800" y="523" class="box-text">Calculates score + state</text>
+  <text x="800" y="545" class="small">excellent, watch, critical, unsafe</text>
+
+  <rect x="1150" y="465" width="300" height="110" class="node db" />
+  <text x="1175" y="497" class="box-title">FoodItem Updated</text>
+  <text x="1175" y="523" class="box-text">effectiveExpiryDate changes</text>
+  <text x="1175" y="545" class="small">unsafe food is excluded</text>
+
+  <path class="fresh-line" d="M345 520 H420" marker-end="url(#greenArrow)" />
+  <path class="fresh-line" d="M700 520 H775" marker-end="url(#greenArrow)" />
+  <path class="fresh-line" d="M1075 520 H1150" marker-end="url(#greenArrow)" />
+  <path class="fresh-line" d="M1300 465 V350 H1240" marker-end="url(#greenArrow)" />
+
+  <rect x="60" y="675" width="1480" height="250" fill="#fbfcfb" stroke="#dce4dc" stroke-width="2" rx="18" />
+  <text x="90" y="710" class="lane-title">3. Demand, Allocation, And Routing</text>
+
+  <rect x="95" y="745" width="250" height="110" class="node client" />
+  <text x="120" y="777" class="box-title">Receiver / NGO</text>
+  <text x="120" y="803" class="box-text">Searches or requests food</text>
+  <text x="120" y="825" class="small">category, radius, location, need</text>
+
+  <rect x="410" y="745" width="260" height="110" class="node api" />
+  <text x="435" y="777" class="box-title">GET /api/food</text>
+  <text x="435" y="803" class="box-text">Filters available items</text>
+  <text x="435" y="825" class="small">non-expired + sensor-safe</text>
+
+  <rect x="735" y="745" width="300" height="110" class="node service" />
+  <text x="760" y="777" class="box-title">allocationService</text>
+  <text x="760" y="803" class="box-text">Ranks best matches</text>
+  <text x="760" y="825" class="small">freshness, meals, distance, demand</text>
+
+  <rect x="1095" y="690" width="320" height="95" class="node db" />
+  <text x="1120" y="722" class="box-title">DemandCenter DB</text>
+  <text x="1120" y="748" class="box-text">Need, urgency, capacity</text>
+  <text x="1120" y="770" class="small">accepted categories + address</text>
+
+  <rect x="1095" y="820" width="320" height="95" class="node api" />
+  <text x="1120" y="852" class="box-title">GET /matches/:foodId</text>
+  <text x="1120" y="878" class="box-text">Ranks demand centers</text>
+  <text x="1120" y="900" class="small">need + route + freshness deadline</text>
+
+  <path class="line" d="M345 800 H410" marker-end="url(#arrow)" />
+  <path class="line" d="M670 800 H735" marker-end="url(#arrow)" />
+  <path class="line" d="M1035 790 C1060 760 1065 742 1095 738" marker-end="url(#arrow)" />
+  <path class="line" d="M1035 815 C1060 845 1065 865 1095 868" marker-end="url(#arrow)" />
+
+  <rect x="60" y="955" width="1480" height="130" fill="#fbfcfb" stroke="#dce4dc" stroke-width="2" rx="18" />
+  <text x="90" y="990" class="lane-title">4. Route Feasibility, Claim Lock, Delivery</text>
+
+  <rect x="95" y="1018" width="240" height="48" class="node api" />
+  <text x="120" y="1049" class="caption">POST /api/routes/analyze</text>
+
+  <rect x="405" y="1018" width="240" height="48" class="node service" />
+  <text x="430" y="1049" class="caption">OSRM route or fallback</text>
+
+  <rect x="715" y="1018" width="270" height="48" class="node risk" />
+  <text x="740" y="1049" class="caption">Can delivery beat expiry?</text>
+
+  <rect x="1055" y="1018" width="220" height="48" class="node api" />
+  <text x="1080" y="1049" class="caption">PUT /food/claim/:id</text>
+
+  <rect x="1345" y="1018" width="150" height="48" class="node db" />
+  <text x="1370" y="1049" class="caption">Impact saved</text>
+
+  <path class="line" d="M335 1042 H405" marker-end="url(#arrow)" />
+  <path class="line" d="M645 1042 H715" marker-end="url(#arrow)" />
+  <path class="risk-line" d="M985 1042 H1055" marker-end="url(#redArrow)" />
+  <path class="line" d="M1275 1042 H1345" marker-end="url(#arrow)" />
+
+  <text x="80" y="1088" class="small">Core rule: static expiry is only the donor estimate. The live sensor-adjusted effectiveExpiryDate is what routing and claiming use.</text>
+</svg>

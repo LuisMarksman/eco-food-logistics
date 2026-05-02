@@ -1,0 +1,7 @@
+# eco-eats-backend/.gitignore
+node_modules
+.env
+*.log
+logs
+dist
+.DS_Store
